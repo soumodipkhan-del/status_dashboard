@@ -202,6 +202,9 @@ existing = load_feedback(tuple(r["id"] for r in rows))
 st.subheader("Customer message")
 st.markdown(f"> {selected_msg}")
 
+if st.toggle("🌐 Translate message to English", key="tr_customer_msg"):
+    st.info(translate_it_en(selected_msg))
+
 meta = rows[0]
 cols = st.columns(4)
 cols[0].metric("Language", meta.get("customer_language") or "—")
