@@ -69,6 +69,18 @@ st.markdown(
                   border:1px solid #cdd9ee !important;}
       [class*="st-key-zone_pager"]{background:#fff4e8 !important;
                   border:1px solid #f4dcbb !important;}
+      /* make the input boxes easy to spot and click */
+      [data-baseweb="input"], [data-baseweb="select"]{
+          background:#ffffff !important;border:1.5px solid #94a3b8 !important;
+          border-radius:8px !important;}
+      [data-baseweb="textarea"]{
+          background:#ffffff !important;border:1.5px solid #cbd5e1 !important;
+          border-radius:8px !important;}
+      [data-baseweb="input"]:focus-within,
+      [data-baseweb="select"]:focus-within,
+      [data-baseweb="textarea"]:focus-within{
+          border-color:#2563eb !important;
+          box-shadow:0 0 0 2px rgba(37,99,235,.18) !important;}
     </style>
     """,
     unsafe_allow_html=True,
