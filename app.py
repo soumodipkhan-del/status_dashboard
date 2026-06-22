@@ -30,6 +30,11 @@ GOOD_RATING = 1
 BAD_RATING = 0
 PAGE_SIZE = 10
 
+# Table that maps model_version_id -> friendly tag (v6, v8, ...).
+# Change this if your table is named differently; the app falls back to
+# short UUIDs if the name is wrong or the table can't be read.
+MODEL_VERSIONS_TABLE = "model_versions"
+
 SHADES = ["#eef4ff", "#eafbf0"]          # alternating card colors
 SHADE_BORDER = ["#c7dbff", "#bff0d0"]
 
@@ -69,7 +74,7 @@ def load_logs(start: date, end: date):
     end_iso = datetime.combine(end, datetime.max.time()).isoformat()
     resp = (
         client.table("inference_log")
-        .select("id, created_at, customer_message, our_reply, our_escalation")
+        .select("id, created_at, customer_message, our_reply, our_escalation, model_version_id")
         .gte("created_at", start_iso)
         .lte("created_at", end_iso)
         .is_("deleted_at", "null")
@@ -95,6 +100,17 @@ def load_feedback(inference_ids: tuple):
     for row in resp.data or []:
         latest.setdefault(row["inference_id"], row)
     return latest
+
+
+@st.cache_data(ttl=600)
+def load_version_tags():
+    """Return {version_id: version_tag}. Empty dict if the table is unreadable."""
+    try:
+        client = get_client()
+        resp = client.table(MODEL_VERSIONS_TABLE).select("id, version_tag").execute()
+        return {r["id"]: r.get("version_tag") for r in (resp.data or [])}
+    except Exception:
+        return {}
 
 
 def save_feedback(inference_id, rating, rater, reason, notes):
@@ -191,6 +207,36 @@ logs = load_logs(start_date, end_date)
 if not logs:
     st.info("No messages found in this date range.")
     st.stop()
+
+# Model version filter (top of the table)
+version_tags = load_version_tags()
+
+
+def version_label(v):
+    if v == "All versions":
+        return "All versions"
+    if v == "—":
+        return "(no version)"
+    tag = version_tags.get(v)
+    return tag if tag else f"{str(v)[:8]}…"
+
+
+versions = sorted(
+    {(r.get("model_version_id") or "—") for r in logs},
+    key=lambda v: version_label(v),
+)
+vcol, _ = st.columns([2, 4])
+with vcol:
+    selected_version = st.selectbox(
+        "Model version",
+        options=["All versions"] + versions,
+        format_func=version_label,
+    )
+if selected_version != "All versions":
+    logs = [r for r in logs if (r.get("model_version_id") or "—") == selected_version]
+    if not logs:
+        st.info("No messages for this model version in the date range.")
+        st.stop()
 
 groups = {}
 for row in logs:
