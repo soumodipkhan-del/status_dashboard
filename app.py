@@ -1,24 +1,27 @@
 """
-Closio reply review dashboard
-------------------------------
-Reads customer messages + GPT replies from the `inference_log` table and
-writes good/bad ratings back to the `feedback` table in Supabase.
+Reply Review Portal
+-------------------
+Reads customer messages + GPT replies from `inference_log` and writes a
+good/bad rating PER REPLY to the `feedback` table (linked by inference_id).
+
+Layout:
+  - Name + date filter across the top
+  - A paginated table (10 customer comments per page) of shaded cards
+  - Each card: the customer message once, then each reply on its own line
+    with Reason | Notes | Good/Bad
+  - Translate button -> a second, English table below the main one
 
 Run locally:   streamlit run app.py
-Deploy:        Streamlit Community Cloud (see README.md)
-
-The Supabase API key is NEVER hardcoded here. It is read from Streamlit
-secrets (.streamlit/secrets.toml locally, or the Secrets box on Streamlit
-Cloud). See README.md.
+The Supabase key is read from Streamlit secrets, never hardcoded.
 """
 
+import html
+import math
 from datetime import datetime, date, timedelta
 
 import streamlit as st
 from supabase import create_client, Client
 
-# Translation is optional at import time so the app still loads if the
-# library is missing for any reason.
 try:
     from deep_translator import GoogleTranslator
     TRANSLATE_AVAILABLE = True
@@ -30,12 +33,15 @@ except Exception:
 # Config
 # --------------------------------------------------------------------------- #
 SUPABASE_URL = "https://ejbbsnkqhbmldxbrewof.supabase.co"
-
-# Map the friendly flag to the int2 `rating` column in the feedback table.
 GOOD_RATING = 1
 BAD_RATING = 0
+PAGE_SIZE = 10
 
-st.set_page_config(page_title="Reply Review", page_icon="✅", layout="wide")
+# Alternating card colors so each comment group is easy to tell apart.
+SHADES = ["#eef4ff", "#eafbf0"]          # light blue / light green
+SHADE_BORDER = ["#c7dbff", "#bff0d0"]
+
+st.set_page_config(page_title="Reply Review Portal", page_icon="📝", layout="wide")
 
 
 # --------------------------------------------------------------------------- #
@@ -43,12 +49,11 @@ st.set_page_config(page_title="Reply Review", page_icon="✅", layout="wide")
 # --------------------------------------------------------------------------- #
 @st.cache_resource
 def get_client() -> Client:
-    """Create a single Supabase client for the session."""
     key = st.secrets.get("SUPABASE_KEY")
     if not key:
         st.error(
             "No SUPABASE_KEY found. Add it to .streamlit/secrets.toml locally, "
-            "or to the Secrets box in Streamlit Cloud. See README.md."
+            "or to the Secrets box in Streamlit Cloud."
         )
         st.stop()
     return create_client(SUPABASE_URL, key)
@@ -59,18 +64,12 @@ def get_client() -> Client:
 # --------------------------------------------------------------------------- #
 @st.cache_data(ttl=120)
 def load_logs(start: date, end: date):
-    """Fetch inference_log rows in the date window (deleted rows excluded)."""
     client = get_client()
     start_iso = datetime.combine(start, datetime.min.time()).isoformat()
     end_iso = datetime.combine(end, datetime.max.time()).isoformat()
-
     resp = (
         client.table("inference_log")
-        .select(
-            "id, created_at, conversation_id, customer_message, "
-            "customer_language, customer_sentiment, customer_intent, "
-            "our_reply, our_escalation, chatgpt_provided"
-        )
+        .select("id, created_at, customer_message, our_reply, our_escalation")
         .gte("created_at", start_iso)
         .lte("created_at", end_iso)
         .is_("deleted_at", "null")
@@ -82,184 +81,217 @@ def load_logs(start: date, end: date):
 
 @st.cache_data(ttl=30)
 def load_feedback(inference_ids: tuple):
-    """Fetch existing feedback rows for a set of inference ids."""
     if not inference_ids:
         return {}
     client = get_client()
     resp = (
         client.table("feedback")
-        .select("id, inference_id, rating, rater, reason, notes, created_at")
+        .select("inference_id, rating, rater, reason, notes, created_at")
         .in_("inference_id", list(inference_ids))
         .order("created_at", desc=True)
         .execute()
     )
-    # Keep the most recent feedback per inference_id.
     latest = {}
     for row in resp.data or []:
-        iid = row["inference_id"]
-        if iid not in latest:
-            latest[iid] = row
+        latest.setdefault(row["inference_id"], row)
     return latest
 
 
-def save_feedback(inference_id: str, rating: int, rater: str, reason: str, notes: str):
-    """Insert a feedback row."""
+def save_feedback(inference_id, rating, rater, reason, notes):
     client = get_client()
-    payload = {
+    client.table("feedback").insert({
         "inference_id": inference_id,
         "rating": rating,
         "rater": rater or None,
         "reason": reason or None,
         "notes": notes or None,
-    }
-    client.table("feedback").insert(payload).execute()
+    }).execute()
 
 
 # --------------------------------------------------------------------------- #
-# Translation
+# Translation (cached in session to avoid re-translating on every rerun)
 # --------------------------------------------------------------------------- #
 def translate_it_en(text: str) -> str:
-    if not TRANSLATE_AVAILABLE:
-        return "(translation library not available)"
     if not text:
         return ""
+    if not TRANSLATE_AVAILABLE:
+        return "(translation library not available)"
+    cache = st.session_state.setdefault("_tr_cache", {})
+    if text in cache:
+        return cache[text]
     try:
-        return GoogleTranslator(source="it", target="en").translate(text)
+        out = GoogleTranslator(source="it", target="en").translate(text)
     except Exception as exc:
-        return f"(translation failed: {exc})"
+        out = f"(translation failed: {exc})"
+    cache[text] = out
+    return out
 
 
 # --------------------------------------------------------------------------- #
-# Sidebar — controls
+# Top bar — title + filters
 # --------------------------------------------------------------------------- #
-st.sidebar.title("Reply Review")
-rater_name = st.sidebar.text_input("Your name (saved as rater)", value="")
+st.title("📝 Reply Review Portal")
 
-st.sidebar.subheader("Date range")
 today = date.today()
-default_start = today - timedelta(days=2)
-date_range = st.sidebar.date_input(
-    "Created between",
-    value=(default_start, today),
-    max_value=today,
-)
-# date_input returns a single date until both ends are picked.
+f1, f2, f3 = st.columns([2, 3, 1])
+with f1:
+    rater_name = st.text_input("Your name", value="", placeholder="reviewer name")
+with f2:
+    date_range = st.date_input(
+        "Date range",
+        value=(today - timedelta(days=2), today),
+        max_value=today,
+    )
+with f3:
+    st.write("")
+    if st.button("🔄 Refresh", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
     start_date, end_date = date_range
 else:
     start_date = end_date = date_range if isinstance(date_range, date) else today
 
-if st.sidebar.button("🔄 Refresh data"):
-    st.cache_data.clear()
-    st.rerun()
+st.divider()
 
 
 # --------------------------------------------------------------------------- #
-# Load + group
+# Load + group by customer message
 # --------------------------------------------------------------------------- #
 logs = load_logs(start_date, end_date)
-
 if not logs:
     st.info("No messages found in this date range.")
     st.stop()
 
-# Group rows by the customer message text. The same message can appear on
-# several rows with different replies, so each group holds all of them.
 groups = {}
 for row in logs:
-    msg = (row.get("customer_message") or "").strip()
-    if not msg:
-        msg = "(empty message)"
+    msg = (row.get("customer_message") or "").strip() or "(empty message)"
     groups.setdefault(msg, []).append(row)
 
-message_texts = list(groups.keys())
+groups_list = list(groups.items())
+total = len(groups_list)
+total_pages = max(1, math.ceil(total / PAGE_SIZE))
 
+# Page state
+page = st.session_state.get("page", 0)
+page = max(0, min(page, total_pages - 1))
+st.session_state["page"] = page
 
-def label_for(msg: str) -> str:
-    n = len(groups[msg])
-    preview = msg if len(msg) <= 70 else msg[:67] + "..."
-    tag = f"  [{n} replies]" if n > 1 else ""
-    return preview + tag
+start_i = page * PAGE_SIZE
+page_groups = groups_list[start_i:start_i + PAGE_SIZE]
 
+# Feedback for everything on this page
+page_ids = tuple(r["id"] for _, rows in page_groups for r in rows)
+existing = load_feedback(page_ids)
 
-st.sidebar.subheader("Messages")
-search = st.sidebar.text_input("Filter messages", value="")
-filtered = [m for m in message_texts if search.lower() in m.lower()] or message_texts
-
-selected_msg = st.sidebar.radio(
-    f"{len(filtered)} message(s)",
-    options=filtered,
-    format_func=label_for,
+st.caption(
+    f"{total} customer message(s) in range · "
+    f"showing {start_i + 1}–{min(start_i + PAGE_SIZE, total)} (page {page + 1} of {total_pages})"
 )
 
 
 # --------------------------------------------------------------------------- #
-# Main panel
+# Helpers for rendering
 # --------------------------------------------------------------------------- #
-rows = groups[selected_msg]
-existing = load_feedback(tuple(r["id"] for r in rows))
+def status_badge(prior):
+    if not prior:
+        return ""
+    if prior["rating"] == GOOD_RATING:
+        return "<span style='color:#0a7a32;font-weight:600'>✅ GOOD</span>"
+    return "<span style='color:#b00020;font-weight:600'>❌ BAD</span>"
 
-st.subheader("Customer message")
-st.markdown(f"> {selected_msg}")
 
-if st.toggle("🌐 Translate message to English", key="tr_customer_msg"):
-    st.info(translate_it_en(selected_msg))
+def card_header(msg, idx):
+    shade = SHADES[idx % 2]
+    border = SHADE_BORDER[idx % 2]
+    st.markdown(
+        f"<div style='background:{shade};border:1px solid {border};"
+        f"padding:10px 14px;border-radius:8px;margin-bottom:6px'>"
+        f"<b>💬 Customer message</b><br>{html.escape(msg)}</div>",
+        unsafe_allow_html=True,
+    )
 
-meta = rows[0]
-cols = st.columns(4)
-cols[0].metric("Language", meta.get("customer_language") or "—")
-cols[1].metric("Sentiment", meta.get("customer_sentiment") or "—")
-cols[2].metric("Intent", meta.get("customer_intent") or "—")
-cols[3].metric("Replies", len(rows))
 
+# --------------------------------------------------------------------------- #
+# Main table
+# --------------------------------------------------------------------------- #
+for gidx, (msg, rows) in enumerate(page_groups):
+    with st.container(border=True):
+        card_header(msg, gidx)
+
+        # column header row
+        h = st.columns([3, 2, 2, 2])
+        h[0].caption("Reply")
+        h[1].caption("Reason")
+        h[2].caption("Notes")
+        h[3].caption("Feedback")
+
+        for j, row in enumerate(rows, start=1):
+            rid = row["id"]
+            reply = row.get("our_reply") or "(no reply text)"
+            prior = existing.get(rid)
+
+            c = st.columns([3, 2, 2, 2])
+            with c[0]:
+                tag = " · escalated" if row.get("our_escalation") else ""
+                st.markdown(f"**Reply {j}**{tag}")
+                st.write(reply)
+                if prior:
+                    st.markdown(status_badge(prior), unsafe_allow_html=True)
+                    if prior.get("rater"):
+                        st.caption(f"by {prior['rater']}")
+            reason = c[1].text_input("reason", key=f"reason_{rid}",
+                                     label_visibility="collapsed", placeholder="reason")
+            notes = c[2].text_area("notes", key=f"notes_{rid}",
+                                   label_visibility="collapsed", placeholder="notes", height=70)
+            with c[3]:
+                if st.button("✅ Good", key=f"good_{rid}", use_container_width=True, type="primary"):
+                    save_feedback(rid, GOOD_RATING, rater_name, reason, notes)
+                    load_feedback.clear()
+                    st.rerun()
+                if st.button("❌ Bad", key=f"bad_{rid}", use_container_width=True):
+                    save_feedback(rid, BAD_RATING, rater_name, reason, notes)
+                    load_feedback.clear()
+                    st.rerun()
+
+
+# --------------------------------------------------------------------------- #
+# Pagination controls
+# --------------------------------------------------------------------------- #
+st.write("")
+p1, p2, p3 = st.columns([1, 2, 1])
+with p1:
+    if page > 0 and st.button("⬅️ Previous", use_container_width=True):
+        st.session_state["page"] = page - 1
+        st.rerun()
+with p2:
+    st.markdown(
+        f"<div style='text-align:center;padding-top:6px'>Page {page + 1} of {total_pages}</div>",
+        unsafe_allow_html=True,
+    )
+with p3:
+    if page < total_pages - 1 and st.button("Next ➡️", use_container_width=True):
+        st.session_state["page"] = page + 1
+        st.rerun()
+
+
+# --------------------------------------------------------------------------- #
+# Translate the whole (visible) table -> English table below
+# --------------------------------------------------------------------------- #
 st.divider()
-st.subheader(f"Replies ({len(rows)})")
-
-for i, row in enumerate(rows, start=1):
-    rid = row["id"]
-    reply = row.get("our_reply") or "(no reply text)"
-    prior = existing.get(rid)
-
-    flag_label = ""
-    if prior:
-        flag_label = " — ✅ GOOD" if prior["rating"] == GOOD_RATING else " — ❌ BAD"
-
-    with st.expander(f"Reply {i}{flag_label}", expanded=(len(rows) == 1)):
-        left, right = st.columns([3, 2])
-
-        with left:
-            st.markdown("**Reply (original)**")
-            st.write(reply)
-
-            if st.toggle("🌐 Translate to English", key=f"tr_{rid}"):
-                st.markdown("**Translation**")
-                st.info(translate_it_en(reply))
-
-            caption_bits = []
-            if row.get("our_escalation"):
-                caption_bits.append("escalated")
-            if row.get("chatgpt_provided"):
-                caption_bits.append("chatgpt provided")
-            caption_bits.append(str(row.get("created_at", "")))
-            st.caption(" · ".join(b for b in caption_bits if b))
-
-        with right:
-            st.markdown("**Flag this reply**")
-            if prior:
-                who = prior.get("rater") or "someone"
-                st.caption(f"Current: {'GOOD' if prior['rating']==GOOD_RATING else 'BAD'} (by {who})")
-
-            reason = st.text_input("Reason (short)", key=f"reason_{rid}")
-            notes = st.text_area("Notes (optional)", key=f"notes_{rid}", height=80)
-
-            b1, b2 = st.columns(2)
-            if b1.button("✅ Good", key=f"good_{rid}", use_container_width=True):
-                save_feedback(rid, GOOD_RATING, rater_name, reason, notes)
-                load_feedback.clear()
-                st.success("Saved as GOOD")
-                st.rerun()
-            if b2.button("❌ Bad", key=f"bad_{rid}", use_container_width=True):
-                save_feedback(rid, BAD_RATING, rater_name, reason, notes)
-                load_feedback.clear()
-                st.success("Saved as BAD")
-                st.rerun()
+if st.toggle("🌐 Translate this page to English"):
+    st.subheader("Translated (English)")
+    for gidx, (msg, rows) in enumerate(page_groups):
+        with st.container(border=True):
+            shade = SHADES[gidx % 2]
+            border = SHADE_BORDER[gidx % 2]
+            st.markdown(
+                f"<div style='background:{shade};border:1px solid {border};"
+                f"padding:10px 14px;border-radius:8px;margin-bottom:6px'>"
+                f"<b>💬 Customer message (EN)</b><br>{html.escape(translate_it_en(msg))}</div>",
+                unsafe_allow_html=True,
+            )
+            for j, row in enumerate(rows, start=1):
+                st.markdown(f"**Reply {j} (EN)**")
+                st.write(translate_it_en(row.get("our_reply") or ""))
