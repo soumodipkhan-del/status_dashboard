@@ -279,7 +279,7 @@ for gidx, (msg, rows) in enumerate(page_groups):
 
         st.markdown("<hr class='rv-sep'>", unsafe_allow_html=True)
 
-        h = st.columns([3, 2, 2, 2])
+        h = st.columns([3, 2, 2, 3])
         h[0].caption("Reply")
         h[1].caption("Reason")
         h[2].caption("Notes")
@@ -290,7 +290,7 @@ for gidx, (msg, rows) in enumerate(page_groups):
             reply = row.get("our_reply") or "(no reply text)"
             prior = existing.get(rid)
 
-            c = st.columns([3, 2, 2, 2])
+            c = st.columns([3, 2, 2, 3])
             with c[0]:
                 tag = " · escalated" if row.get("our_escalation") else ""
                 st.markdown(f"**Reply {j}**{tag}")
@@ -302,16 +302,17 @@ for gidx, (msg, rows) in enumerate(page_groups):
                     st.markdown(status_badge(prior), unsafe_allow_html=True)
                     if prior.get("rater"):
                         st.caption(f"by {prior['rater']}")
-            reason = c[1].text_input("reason", key=f"reason_{rid}",
-                                     label_visibility="collapsed", placeholder="reason")
+            reason = c[1].text_area("reason", key=f"reason_{rid}",
+                                     label_visibility="collapsed", placeholder="reason", height=70)
             notes = c[2].text_area("notes", key=f"notes_{rid}",
                                    label_visibility="collapsed", placeholder="notes", height=70)
             with c[3]:
-                if st.button("✅ Good", key=f"good_{rid}", use_container_width=True, type="primary"):
+                fb = st.columns(2)
+                if fb[0].button("✅ Good", key=f"good_{rid}", use_container_width=True, type="primary"):
                     save_feedback(rid, GOOD_RATING, rater_name, reason, notes)
                     load_feedback.clear()
                     st.rerun()
-                if st.button("❌ Bad", key=f"bad_{rid}", use_container_width=True):
+                if fb[1].button("❌ Bad", key=f"bad_{rid}", use_container_width=True):
                     save_feedback(rid, BAD_RATING, rater_name, reason, notes)
                     load_feedback.clear()
                     st.rerun()
