@@ -61,6 +61,14 @@ st.markdown(
       [class*="st-key-bad_"] button:hover{background:#be123c !important;}
       /* card containers a touch softer */
       [data-testid="stVerticalBlockBorderWrapper"]{border-radius:10px;}
+      /* section zones */
+      .rv-zonehead{font-weight:700;color:#1e3a8a;font-size:0.95rem;margin:2px 0 8px;}
+      .rv-zonebar{background:#e8f0ff;border:1px solid #cdd9ee;color:#1e3a8a;
+                  font-weight:700;padding:8px 12px;border-radius:10px;margin:8px 0 10px;}
+      [class*="st-key-zone_filters"]{background:#eef3fb !important;
+                  border:1px solid #cdd9ee !important;}
+      [class*="st-key-zone_pager"]{background:#fff4e8 !important;
+                  border:1px solid #f4dcbb !important;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -203,27 +211,31 @@ st.markdown(
 )
 
 today = date.today()
-f1, f2, f3 = st.columns([2, 3, 1])
-with f1:
-    rater_name = st.text_input("**Your name**", value="", placeholder="reviewer name")
-with f2:
-    date_range = st.date_input(
-        "**Date range**",
-        value=(today - timedelta(days=2), today),
-        max_value=today,
+filter_zone = st.container(border=True, key="zone_filters")
+with filter_zone:
+    st.markdown(
+        "<div class='rv-zonehead'>🔍 Selection — reviewer, date &amp; model version</div>",
+        unsafe_allow_html=True,
     )
-with f3:
-    st.write("")
-    if st.button("🔄 Refresh", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
+    f1, f2, f3 = st.columns([2, 3, 1])
+    with f1:
+        rater_name = st.text_input("**Your name**", value="", placeholder="reviewer name")
+    with f2:
+        date_range = st.date_input(
+            "**Date range**",
+            value=(today - timedelta(days=2), today),
+            max_value=today,
+        )
+    with f3:
+        st.write("")
+        if st.button("🔄 Refresh", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
 
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
     start_date, end_date = date_range
 else:
     start_date = end_date = date_range if isinstance(date_range, date) else today
-
-st.divider()
 
 
 # --------------------------------------------------------------------------- #
@@ -251,13 +263,14 @@ versions = sorted(
     {(r.get("model_version_id") or "—") for r in logs},
     key=lambda v: version_label(v),
 )
-vcol, _ = st.columns([2, 4])
-with vcol:
-    selected_version = st.selectbox(
-        "**Model version**",
-        options=["All versions"] + versions,
-        format_func=version_label,
-    )
+with filter_zone:
+    vcol, _ = st.columns([2, 4])
+    with vcol:
+        selected_version = st.selectbox(
+            "**Model version**",
+            options=["All versions"] + versions,
+            format_func=version_label,
+        )
 if selected_version != "All versions":
     logs = [r for r in logs if (r.get("model_version_id") or "—") == selected_version]
     if not logs:
@@ -291,6 +304,10 @@ st.caption(
 # --------------------------------------------------------------------------- #
 # Main table
 # --------------------------------------------------------------------------- #
+st.markdown(
+    "<div class='rv-zonebar'>📋 Messages &amp; Replies — review and rate each reply</div>",
+    unsafe_allow_html=True,
+)
 for gidx, (msg, rows) in enumerate(page_groups):
     with st.container(border=True):
         msg_box(msg, gidx, "💬 Customer message")
@@ -352,17 +369,20 @@ for gidx, (msg, rows) in enumerate(page_groups):
 # Pagination controls
 # --------------------------------------------------------------------------- #
 st.write("")
-p1, p2, p3 = st.columns([1, 2, 1])
-with p1:
-    if page > 0 and st.button("⬅️ Previous", use_container_width=True):
-        st.session_state["page"] = page - 1
-        st.rerun()
-with p2:
-    st.markdown(
-        f"<div style='text-align:center;padding-top:6px'>Page {page + 1} of {total_pages}</div>",
-        unsafe_allow_html=True,
-    )
-with p3:
-    if page < total_pages - 1 and st.button("Next ➡️", use_container_width=True):
-        st.session_state["page"] = page + 1
-        st.rerun()
+pager_zone = st.container(border=True, key="zone_pager")
+with pager_zone:
+    st.markdown("<div class='rv-zonehead'>📄 Page navigation</div>", unsafe_allow_html=True)
+    p1, p2, p3 = st.columns([1, 2, 1])
+    with p1:
+        if page > 0 and st.button("⬅️ Previous", use_container_width=True):
+            st.session_state["page"] = page - 1
+            st.rerun()
+    with p2:
+        st.markdown(
+            f"<div style='text-align:center;padding-top:6px'>Page {page + 1} of {total_pages}</div>",
+            unsafe_allow_html=True,
+        )
+    with p3:
+        if page < total_pages - 1 and st.button("Next ➡️", use_container_width=True):
+            st.session_state["page"] = page + 1
+            st.rerun()
