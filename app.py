@@ -40,11 +40,29 @@ SHADE_BORDER = ["#c7dbff", "#bff0d0"]
 
 st.set_page_config(page_title="Reply Review Portal", page_icon="📝", layout="wide")
 
-# Slightly smaller, tidier text throughout the cards.
+# Professional theme + compact, tidy text.
 st.markdown(
-    "<style>.rv-text{font-size:0.85rem;line-height:1.45;}"
-    ".rv-box{font-size:0.85rem;line-height:1.45;padding:9px 12px;border-radius:8px;}"
-    ".rv-sep{margin:8px 0;border:none;border-top:1px dashed #b9b9b9;}</style>",
+    """
+    <style>
+      .rv-text{font-size:0.85rem;line-height:1.45;}
+      .rv-box{font-size:0.85rem;line-height:1.45;padding:9px 12px;border-radius:8px;}
+      .rv-sep{margin:8px 0;border:none;border-top:1px dashed #c7d2e0;}
+      /* bold every widget label */
+      [data-testid="stWidgetLabel"] p{font-weight:600 !important;}
+      /* column header style */
+      .rv-colhead{font-weight:700;color:#1e3a8a;font-size:0.72rem;
+                  text-transform:uppercase;letter-spacing:.05em;}
+      /* good / bad button colors (matched by Streamlit key class) */
+      [class*="st-key-good_"] button{background:#16a34a !important;
+          border-color:#16a34a !important;color:#fff !important;font-weight:600;}
+      [class*="st-key-good_"] button:hover{background:#15803d !important;}
+      [class*="st-key-bad_"] button{background:#e11d48 !important;
+          border-color:#e11d48 !important;color:#fff !important;font-weight:600;}
+      [class*="st-key-bad_"] button:hover{background:#be123c !important;}
+      /* card containers a touch softer */
+      [data-testid="stVerticalBlockBorderWrapper"]{border-radius:10px;}
+    </style>
+    """,
     unsafe_allow_html=True,
 )
 
@@ -174,15 +192,23 @@ def status_badge(prior):
 # --------------------------------------------------------------------------- #
 # Top bar — title + filters
 # --------------------------------------------------------------------------- #
-st.title("📝 Reply Review Portal")
+st.markdown(
+    "<div style='text-align:center;background:linear-gradient(90deg,#1e3a8a,#2563eb);"
+    "color:#fff;padding:18px 16px;border-radius:14px;margin-bottom:16px;"
+    "box-shadow:0 2px 8px rgba(30,58,138,.25)'>"
+    "<h1 style='margin:0;font-size:1.9rem'>📝 Reply Review Portal</h1>"
+    "<div style='opacity:.92;font-size:.9rem;margin-top:2px'>"
+    "Review and rate generated replies</div></div>",
+    unsafe_allow_html=True,
+)
 
 today = date.today()
 f1, f2, f3 = st.columns([2, 3, 1])
 with f1:
-    rater_name = st.text_input("Your name", value="", placeholder="reviewer name")
+    rater_name = st.text_input("**Your name**", value="", placeholder="reviewer name")
 with f2:
     date_range = st.date_input(
-        "Date range",
+        "**Date range**",
         value=(today - timedelta(days=2), today),
         max_value=today,
     )
@@ -228,7 +254,7 @@ versions = sorted(
 vcol, _ = st.columns([2, 4])
 with vcol:
     selected_version = st.selectbox(
-        "Model version",
+        "**Model version**",
         options=["All versions"] + versions,
         format_func=version_label,
     )
@@ -280,10 +306,10 @@ for gidx, (msg, rows) in enumerate(page_groups):
         st.markdown("<hr class='rv-sep'>", unsafe_allow_html=True)
 
         h = st.columns([3, 2, 2, 3])
-        h[0].caption("Reply")
-        h[1].caption("Reason")
-        h[2].caption("Notes")
-        h[3].caption("Feedback")
+        h[0].markdown("<span class='rv-colhead'>Reply</span>", unsafe_allow_html=True)
+        h[1].markdown("<span class='rv-colhead'>Reason</span>", unsafe_allow_html=True)
+        h[2].markdown("<span class='rv-colhead'>Notes</span>", unsafe_allow_html=True)
+        h[3].markdown("<span class='rv-colhead'>Feedback</span>", unsafe_allow_html=True)
 
         for j, row in enumerate(rows, start=1):
             rid = row["id"]
