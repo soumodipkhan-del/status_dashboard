@@ -152,14 +152,19 @@ def load_version_tags():
 
 
 def save_feedback(inference_id, rating, rater, reason, notes):
-    client = get_client()
-    client.table("feedback").insert({
-        "inference_id": inference_id,
-        "rating": rating,
-        "rater": rater or None,
-        "reason": reason or None,
-        "notes": notes or None,
-    }).execute()
+    """Insert one feedback row. Returns None on success, or an error string."""
+    try:
+        client = get_client()
+        client.table("feedback").insert({
+            "inference_id": inference_id,
+            "rating": rating,
+            "rater": rater or None,
+            "reason": reason or None,
+            "notes": notes or None,
+        }).execute()
+        return None
+    except Exception as e:
+        return str(e)
 
 
 # --------------------------------------------------------------------------- #
@@ -364,13 +369,19 @@ for gidx, (msg, rows) in enumerate(page_groups):
             with c[3]:
                 fb = st.columns(2)
                 if fb[0].button("✅ Good", key=f"good_{rid}", use_container_width=True, type="primary"):
-                    save_feedback(rid, GOOD_RATING, rater_name, reason, notes)
-                    load_feedback.clear()
-                    st.rerun()
+                    err = save_feedback(rid, GOOD_RATING, rater_name, reason, notes)
+                    if err:
+                        st.error(f"Could not save: {err}")
+                    else:
+                        load_feedback.clear()
+                        st.rerun()
                 if fb[1].button("❌ Bad", key=f"bad_{rid}", use_container_width=True):
-                    save_feedback(rid, BAD_RATING, rater_name, reason, notes)
-                    load_feedback.clear()
-                    st.rerun()
+                    err = save_feedback(rid, BAD_RATING, rater_name, reason, notes)
+                    if err:
+                        st.error(f"Could not save: {err}")
+                    else:
+                        load_feedback.clear()
+                        st.rerun()
 
             # divider between replies (not after the last one)
             if j < len(rows):
