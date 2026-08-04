@@ -9,6 +9,7 @@ The Supabase key is read from Streamlit secrets, never hardcoded.
 """
 
 import html
+import json
 import math
 from datetime import datetime, date, timedelta
 
@@ -112,7 +113,7 @@ def load_logs(start: date, end: date):
     end_iso = datetime.combine(end, datetime.max.time()).isoformat()
     resp = (
         client.table("inference_log")
-        .select("id, created_at, customer_message, our_reply, our_escalation, model_version_id")
+        .select("id, created_at, customer_message, our_reply, our_escalation, model_version_id, history_json")
         .gte("created_at", start_iso)
         .lte("created_at", end_iso)
         .is_("deleted_at", "null")
@@ -202,6 +203,113 @@ def msg_box(text, idx, label):
     st.markdown(
         f"<div class='rv-box' style='background:{shade};border:1px solid {border};'>"
         f"<b>{label}</b><br>{safe}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+ROLE_KEYS = ("role", "sender", "from", "speaker", "author", "type")
+TEXT_KEYS = ("content", "text", "message", "body", "msg", "value")
+AGENT_ROLES = {"assistant", "agent", "bot", "ai", "system", "support",
+               "operator", "our", "reply", "answer", "response", "staff"}
+
+
+def _first(d, keys):
+    for k in keys:
+        if isinstance(d, dict) and d.get(k) is not None:
+            return d[k]
+    return None
+
+
+def _flatten(text):
+    if isinstance(text, list):
+        parts = []
+        for p in text:
+            if isinstance(p, dict):
+                parts.append(str(p.get("text") or p.get("content") or ""))
+            else:
+                parts.append(str(p))
+        return " ".join(parts)
+    return str(text)
+
+
+def normalize_history(hist):
+    """Turn whatever is in history_json into a list of (role, text)."""
+    if hist is None:
+        return []
+    if isinstance(hist, str):
+        hist = hist.strip()
+        if not hist:
+            return []
+        try:
+            hist = json.loads(hist)
+        except Exception:
+            return [("", hist)]
+    if isinstance(hist, dict):
+        for k in ("messages", "history", "conversation", "turns", "chat"):
+            if isinstance(hist.get(k), list):
+                hist = hist[k]
+                break
+        else:
+            hist = [hist]
+    if not isinstance(hist, list):
+        return []
+
+    out = []
+    for m in hist:
+        if isinstance(m, str):
+            out.append(("", m))
+            continue
+        if not isinstance(m, dict):
+            continue
+        role = _first(m, ROLE_KEYS)
+        text = _first(m, TEXT_KEYS)
+        if text is not None:
+            out.append((str(role or ""), _flatten(text)))
+            continue
+        # pair style: {"user": "...", "assistant": "..."}
+        u = _first(m, ("user", "customer", "human", "client"))
+        a = _first(m, ("assistant", "agent", "bot", "reply", "answer", "response"))
+        if u is not None:
+            out.append(("user", _flatten(u)))
+        if a is not None:
+            out.append(("assistant", _flatten(a)))
+    return out
+
+
+def _is_agent(role):
+    return (role or "").strip().lower() in AGENT_ROLES
+
+
+def render_history(hist, translate=False):
+    msgs = normalize_history(hist)
+    if not msgs:
+        st.caption("No conversation history available for this message.")
+        return
+    bubbles = []
+    for role, text in msgs:
+        agent = _is_agent(role)
+        disp = translate_it_en(text) if translate else text
+        safe = html.escape(disp or "").replace("\n", "<br>")
+        label = html.escape(role) if role else ("Agent" if agent else "Customer")
+        if agent:
+            bubbles.append(
+                "<div style='display:flex;justify-content:flex-end;margin:5px 0'>"
+                "<div style='max-width:78%;background:#dcf8c6;border-radius:12px 12px 2px 12px;"
+                "padding:7px 11px;font-size:0.83rem;line-height:1.4'>"
+                f"<div style='font-size:0.62rem;color:#4b5563;font-weight:700;"
+                f"text-transform:uppercase;letter-spacing:.03em'>{label}</div>{safe}</div></div>"
+            )
+        else:
+            bubbles.append(
+                "<div style='display:flex;justify-content:flex-start;margin:5px 0'>"
+                "<div style='max-width:78%;background:#ffffff;border:1px solid #e2e8f0;"
+                "border-radius:12px 12px 12px 2px;padding:7px 11px;font-size:0.83rem;line-height:1.4'>"
+                f"<div style='font-size:0.62rem;color:#4b5563;font-weight:700;"
+                f"text-transform:uppercase;letter-spacing:.03em'>{label}</div>{safe}</div></div>"
+            )
+    st.markdown(
+        "<div style='background:#eef2f7;border:1px solid #d7dee8;border-radius:10px;"
+        "padding:10px;max-height:380px;overflow-y:auto'>" + "".join(bubbles) + "</div>",
         unsafe_allow_html=True,
     )
 
@@ -336,6 +444,12 @@ for gidx, (msg, rows) in enumerate(page_groups):
         show_tr = st.session_state.get(tkey, False)
         if show_tr:
             msg_box(translate_it_en(msg), gidx, "💬 Customer message (EN)")
+
+        # Full conversation context, shown like a chat (WhatsApp style)
+        with st.expander("💬 View full conversation (context)"):
+            if show_tr:
+                st.caption("Showing English translation (Translate is on)")
+            render_history(rows[0].get("history_json"), translate=show_tr)
 
         st.markdown("<hr class='rv-sep'>", unsafe_allow_html=True)
 
