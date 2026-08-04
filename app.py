@@ -113,7 +113,7 @@ def load_logs(start: date, end: date):
     end_iso = datetime.combine(end, datetime.max.time()).isoformat()
     resp = (
         client.table("inference_log")
-        .select("id, created_at, customer_message, our_reply, our_escalation, model_version_id, history_json")
+        .select("id, created_at, conversation_id, conversation_turn, customer_message, our_reply, our_escalation, model_version_id, history_json")
         .gte("created_at", start_iso)
         .lte("created_at", end_iso)
         .is_("deleted_at", "null")
@@ -402,10 +402,14 @@ if selected_version != "All versions":
         st.info("No messages for this model version in the date range.")
         st.stop()
 
+# Group by conversation + turn, so the same message text in two different
+# conversations stays as two separate cards (each with its own history/reply).
 groups = {}
 for row in logs:
-    msg = (row.get("customer_message") or "").strip() or "(empty message)"
-    groups.setdefault(msg, []).append(row)
+    conv = row.get("conversation_id") or "—"
+    turn = row.get("conversation_turn")
+    turn_part = turn if turn is not None else (row.get("customer_message") or "")
+    groups.setdefault((conv, turn_part), []).append(row)
 
 groups_list = list(groups.items())
 total = len(groups_list)
@@ -421,7 +425,7 @@ page_ids = tuple(r["id"] for _, rows in page_groups for r in rows)
 existing = load_feedback(page_ids)
 
 st.caption(
-    f"{total} customer message(s) in range · "
+    f"{total} conversation message(s) in range · "
     f"showing {start_i + 1}–{min(start_i + PAGE_SIZE, total)} (page {page + 1} of {total_pages})"
 )
 
@@ -433,8 +437,18 @@ st.markdown(
     "<div class='rv-zonebar'>📋 Messages &amp; Replies — review and rate each reply</div>",
     unsafe_allow_html=True,
 )
-for gidx, (msg, rows) in enumerate(page_groups):
+for gidx, ((conv, turn_part), rows) in enumerate(page_groups):
+    msg = rows[0].get("customer_message") or "(empty message)"
     with st.container(border=True):
+        # small conversation tag so identical messages are distinguishable
+        conv_short = str(conv)[:8] if conv and conv != "—" else "unknown"
+        turn = rows[0].get("conversation_turn")
+        turn_txt = f" · turn {turn}" if turn is not None else ""
+        st.markdown(
+            f"<div style='font-size:0.72rem;color:#64748b;font-weight:600'>"
+            f"🧵 Conversation {conv_short}{turn_txt}</div>",
+            unsafe_allow_html=True,
+        )
         msg_box(msg, gidx, "💬 Customer message")
 
         # Per-message translate button (sits right under the message)
