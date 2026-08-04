@@ -181,7 +181,7 @@ def translate_it_en(text) -> str:
     if text in cache:
         return cache[text]
     try:
-        out = GoogleTranslator(source="it", target="en").translate(text)
+        out = GoogleTranslator(source="auto", target="en").translate(text)
     except Exception as exc:
         out = f"(translation failed: {exc})"
     out = out if out else text          # guard against None / empty result
