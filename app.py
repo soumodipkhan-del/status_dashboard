@@ -308,7 +308,7 @@ def render_history(hist, translate=False):
                 f"text-transform:uppercase;letter-spacing:.03em'>{label}</div>{safe}</div></div>"
             )
     st.markdown(
-        "<div style='background:#eef2f7;border:1px solid #d7dee8;border-radius:10px;"
+        "<div style='background:#fff9db;border:1px solid #f2e29a;border-radius:10px;"
         "padding:10px;max-height:380px;overflow-y:auto'>" + "".join(bubbles) + "</div>",
         unsafe_allow_html=True,
     )
