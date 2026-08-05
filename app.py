@@ -82,6 +82,12 @@ st.markdown(
       [data-baseweb="textarea"]:focus-within{
           border-color:#2563eb !important;
           box-shadow:0 0 0 2px rgba(37,99,235,.18) !important;}
+      /* conversation expander bar in light yellow */
+      [data-testid="stExpander"] details{background:#fff9db !important;
+          border:1px solid #f2e29a !important;border-radius:10px !important;}
+      [data-testid="stExpander"] summary{background:#fff9db !important;
+          border-radius:10px !important;}
+      [data-testid="stExpander"] summary:hover{background:#fff3bf !important;}
     </style>
     """,
     unsafe_allow_html=True,
