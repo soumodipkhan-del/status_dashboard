@@ -119,7 +119,7 @@ def load_logs(start: date, end: date):
     end_iso = datetime.combine(end, datetime.max.time()).isoformat()
     resp = (
         client.table("inference_log")
-        .select("id, created_at, conversation_id, conversation_turn, customer_message, our_reply, our_escalation, model_version_id, history_json")
+        .select("id, created_at, conversation_id, conversation_turn, customer_message, customer_intent, our_reply, our_escalation, model_version_id, history_json")
         .gte("created_at", start_iso)
         .lte("created_at", end_iso)
         .is_("deleted_at", "null")
@@ -394,19 +394,31 @@ versions = sorted(
     {(r.get("model_version_id") or "—") for r in logs},
     key=lambda v: version_label(v),
 )
+intents = sorted({(r.get("customer_intent") or "—") for r in logs}, key=str)
 with filter_zone:
-    vcol, _ = st.columns([2, 4])
+    vcol, icol, _ = st.columns([2, 2, 2])
     with vcol:
         selected_version = st.selectbox(
             "**Model version**",
             options=["All versions"] + versions,
             format_func=version_label,
         )
+    with icol:
+        selected_intent = st.selectbox(
+            "**Customer intent**",
+            options=["All intents"] + intents,
+            format_func=lambda x: (
+                "All intents" if x == "All intents"
+                else "(none)" if x == "—" else str(x)
+            ),
+        )
 if selected_version != "All versions":
     logs = [r for r in logs if (r.get("model_version_id") or "—") == selected_version]
-    if not logs:
-        st.info("No messages for this model version in the date range.")
-        st.stop()
+if selected_intent != "All intents":
+    logs = [r for r in logs if (r.get("customer_intent") or "—") == selected_intent]
+if not logs:
+    st.info("No messages match these filters in the date range.")
+    st.stop()
 
 # Group by conversation + turn, so the same message text in two different
 # conversations stays as two separate cards (each with its own history/reply).
@@ -450,9 +462,11 @@ for gidx, ((conv, turn_part), rows) in enumerate(page_groups):
         conv_short = str(conv)[:8] if conv and conv != "—" else "unknown"
         turn = rows[0].get("conversation_turn")
         turn_txt = f" · turn {turn}" if turn is not None else ""
+        intent = rows[0].get("customer_intent")
+        intent_txt = f" · intent: {html.escape(str(intent))}" if intent else ""
         st.markdown(
             f"<div style='font-size:0.72rem;color:#64748b;font-weight:600'>"
-            f"🧵 Conversation {conv_short}{turn_txt}</div>",
+            f"🧵 Conversation {conv_short}{turn_txt}{intent_txt}</div>",
             unsafe_allow_html=True,
         )
         msg_box(msg, gidx, "💬 Customer message")
