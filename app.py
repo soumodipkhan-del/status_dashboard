@@ -11,6 +11,7 @@ The Supabase key is read from Streamlit secrets, never hardcoded.
 import html
 import json
 import math
+import time
 from datetime import datetime, date, timedelta
 
 import streamlit as st
@@ -21,6 +22,12 @@ try:
     TRANSLATE_AVAILABLE = True
 except Exception:
     TRANSLATE_AVAILABLE = False
+
+try:
+    from deep_translator import MyMemoryTranslator
+    MYMEMORY_AVAILABLE = True
+except Exception:
+    MYMEMORY_AVAILABLE = False
 
 
 # --------------------------------------------------------------------------- #
@@ -175,8 +182,39 @@ def save_feedback(inference_id, rating, rater, reason, notes):
 
 
 # --------------------------------------------------------------------------- #
-# Translation  (always returns a string, never None)
+# Translation  (resilient: retries + fallback, always returns a string)
 # --------------------------------------------------------------------------- #
+FAIL_MSG = "(translation temporarily unavailable — click Translate again)"
+
+
+def _looks_like_error(s):
+    if not s:
+        return True
+    low = s.lower()
+    return any(t in low for t in (
+        "error 500", "that's an error", "please try again later",
+        "1500.that", "service unavailable",
+    ))
+
+
+def _chunks(text, size=460):
+    return [text[i:i + size] for i in range(0, len(text), size)] or [text]
+
+
+def _google(text):
+    out = GoogleTranslator(source="auto", target="en").translate(text)
+    return out if out and not _looks_like_error(out) else None
+
+
+def _mymemory(text):
+    if not MYMEMORY_AVAILABLE:
+        return None
+    tr = MyMemoryTranslator(source="auto", target="en-GB")
+    parts = [tr.translate(c) for c in _chunks(text)]
+    joined = " ".join(p for p in parts if p)
+    return joined or None
+
+
 def translate_it_en(text) -> str:
     text = (text or "").strip()
     if not text:
@@ -186,13 +224,28 @@ def translate_it_en(text) -> str:
     cache = st.session_state.setdefault("_tr_cache", {})
     if text in cache:
         return cache[text]
-    try:
-        out = GoogleTranslator(source="auto", target="en").translate(text)
-    except Exception as exc:
-        out = f"(translation failed: {exc})"
-    out = out if out else text          # guard against None / empty result
-    cache[text] = str(out)
-    return cache[text]
+
+    result = None
+    # try Google a couple of times (endpoint is flaky under load)
+    for attempt in range(3):
+        try:
+            result = _google(text)
+            if result:
+                break
+        except Exception:
+            result = None
+        time.sleep(0.4)
+    # fall back to MyMemory if Google didn't work
+    if not result:
+        try:
+            result = _mymemory(text)
+        except Exception:
+            result = None
+
+    if result:
+        cache[text] = result          # cache only successful translations
+        return result
+    return FAIL_MSG                    # not cached, so a later click retries
 
 
 # --------------------------------------------------------------------------- #
