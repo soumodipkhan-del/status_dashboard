@@ -29,6 +29,12 @@ try:
 except Exception:
     MYMEMORY_AVAILABLE = False
 
+try:
+    from langdetect import detect as _lang_detect
+    LANGDETECT_AVAILABLE = True
+except Exception:
+    LANGDETECT_AVAILABLE = False
+
 
 # --------------------------------------------------------------------------- #
 # Config
@@ -194,6 +200,7 @@ def _looks_like_error(s):
     return any(t in low for t in (
         "error 500", "that's an error", "please try again later",
         "1500.that", "service unavailable",
+        "invalid source language", "langpair", "no content",
     ))
 
 
@@ -207,12 +214,22 @@ def _google(text):
 
 
 def _mymemory(text):
-    if not MYMEMORY_AVAILABLE:
+    # MyMemory needs a real source language, so detect it first.
+    if not (MYMEMORY_AVAILABLE and LANGDETECT_AVAILABLE):
         return None
-    tr = MyMemoryTranslator(source="auto", target="en-GB")
-    parts = [tr.translate(c) for c in _chunks(text)]
-    joined = " ".join(p for p in parts if p)
-    return joined or None
+    try:
+        src = _lang_detect(text[:500])
+    except Exception:
+        return None
+    if not src or src == "en":
+        return None
+    try:
+        tr = MyMemoryTranslator(source=src, target="en-GB")
+        parts = [tr.translate(c) for c in _chunks(text)]
+    except Exception:
+        return None
+    good = [p for p in parts if p and not _looks_like_error(p)]
+    return " ".join(good) or None
 
 
 def translate_it_en(text) -> str:
