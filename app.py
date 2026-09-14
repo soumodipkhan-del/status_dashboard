@@ -208,7 +208,24 @@ def _chunks(text, size=460):
     return [text[i:i + size] for i in range(0, len(text), size)] or [text]
 
 
+def _google_direct(text):
+    """Google's lightweight endpoint — works from server IPs where the
+    scraped web endpoint gets blocked. Stdlib only, no API key."""
+    import urllib.request
+    import urllib.parse
+    url = ("https://translate.googleapis.com/translate_a/single"
+           "?client=gtx&sl=auto&tl=en&dt=t&q=" + urllib.parse.quote(text))
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=12) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    parts = [seg[0] for seg in data[0] if seg and seg[0]]
+    out = "".join(parts).strip()
+    return out if out and not _looks_like_error(out) else None
+
+
 def _google(text):
+    if not TRANSLATE_AVAILABLE:
+        return None
     out = GoogleTranslator(source="auto", target="en").translate(text)
     return out if out and not _looks_like_error(out) else None
 
@@ -236,30 +253,25 @@ def translate_it_en(text) -> str:
     text = (text or "").strip()
     if not text:
         return ""
-    if not TRANSLATE_AVAILABLE:
-        return "(translation unavailable)"
     cache = st.session_state.setdefault("_tr_cache", {})
     if text in cache:
         return cache[text]
 
     result = None
-    # try Google a couple of times (endpoint is flaky under load)
-    for attempt in range(3):
-        try:
-            result = _google(text)
+    # Try methods in order of reliability from a server; a couple of tries each.
+    for fn in (_google_direct, _google, _mymemory):
+        for _ in range(2):
+            try:
+                result = fn(text)
+            except Exception:
+                result = None
             if result:
                 break
-        except Exception:
-            result = None
-        time.sleep(0.4)
-    # fall back to MyMemory if Google didn't work
-    if not result:
-        try:
-            result = _mymemory(text)
-        except Exception:
-            result = None
+            time.sleep(0.3)
+        if result:
+            break
 
-    if result:
+    if result and not _looks_like_error(result):
         cache[text] = result          # cache only successful translations
         return result
     return FAIL_MSG                    # not cached, so a later click retries
