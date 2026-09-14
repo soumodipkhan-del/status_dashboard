@@ -232,6 +232,35 @@ def _deepl(text):
     return out or None
 
 
+LINGVA_INSTANCES = [
+    "https://lingva.ml",
+    "https://translate.plausibility.cloud",
+    "https://lingva.garudalinux.org",
+    "https://lingva.lunar.icu",
+]
+
+
+def _lingva(text):
+    """Keyless Google-Translate proxy with several fallback servers."""
+    import urllib.request
+    import urllib.parse
+    q = urllib.parse.quote(text[:4500], safe="")
+    for base in LINGVA_INSTANCES:
+        try:
+            req = urllib.request.Request(
+                f"{base}/api/v1/auto/en/{q}",
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                j = json.loads(resp.read().decode("utf-8"))
+            out = (j.get("translation") or "").strip()
+            if out and not _looks_like_error(out):
+                return out
+        except Exception:
+            continue
+    return None
+
+
 def _google_direct(text):
     """Google's lightweight endpoint — works from server IPs where the
     scraped web endpoint gets blocked. Stdlib only, no API key."""
@@ -283,7 +312,7 @@ def translate_it_en(text) -> str:
 
     result = None
     # Try methods in order of reliability from a server; a couple of tries each.
-    for fn in (_deepl, _google_direct, _google, _mymemory):
+    for fn in (_deepl, _lingva, _google_direct, _google, _mymemory):
         for _ in range(2):
             try:
                 result = fn(text)
