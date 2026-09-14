@@ -284,8 +284,9 @@ def _google(text):
 
 
 def _mymemory(text):
-    # MyMemory needs a real source language, so detect it first.
-    if not (MYMEMORY_AVAILABLE and LANGDETECT_AVAILABLE):
+    """MyMemory's real API — free, no key. Detects source language first,
+    and uses MYMEMORY_EMAIL from secrets (if set) to raise the daily limit."""
+    if not LANGDETECT_AVAILABLE:
         return None
     try:
         src = _lang_detect(text[:500])
@@ -293,13 +294,24 @@ def _mymemory(text):
         return None
     if not src or src == "en":
         return None
-    try:
-        tr = MyMemoryTranslator(source=src, target="en-GB")
-        parts = [tr.translate(c) for c in _chunks(text)]
-    except Exception:
-        return None
-    good = [p for p in parts if p and not _looks_like_error(p)]
-    return " ".join(good) or None
+    import urllib.request
+    import urllib.parse
+    email = st.secrets.get("MYMEMORY_EMAIL", "")
+    outs = []
+    for chunk in _chunks(text, 480):
+        params = {"q": chunk, "langpair": f"{src}|en"}
+        if email:
+            params["de"] = email
+        url = "https://api.mymemory.translated.net/get?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            j = json.loads(resp.read().decode("utf-8"))
+        seg = ((j.get("responseData") or {}).get("translatedText") or "").strip()
+        if not seg or _looks_like_error(seg):
+            return None
+        outs.append(seg)
+    joined = " ".join(o for o in outs if o).strip()
+    return joined or None
 
 
 def _run(fn, name, text, debug):
@@ -308,10 +320,16 @@ def _run(fn, name, text, debug):
     except Exception as e:
         debug.append(f"{name}: {type(e).__name__}: {str(e)[:90]}")
         return None
-    if out and not _looks_like_error(out):
+    if out and _looks_like_error(out):
+        debug.append(f"{name}: error response — {str(out)[:60]}")
+        return None
+    if out and out.strip().lower() == text.strip().lower():
+        debug.append(f"{name}: returned original text unchanged (not translated)")
+        return None
+    if out:
         debug.append(f"{name}: ok")
         return out
-    debug.append(f"{name}: no usable result" + (f" — {str(out)[:60]}" if out else ""))
+    debug.append(f"{name}: no result")
     return None
 
 
@@ -329,9 +347,9 @@ def translate_it_en(text) -> str:
         f", mymemory={'yes' if MYMEMORY_AVAILABLE else 'NO'}"
     ]
     result = None
-    for name, fn in (("deepl", _deepl), ("lingva", _lingva),
-                     ("googleapis", _google_direct), ("google", _google),
-                     ("mymemory", _mymemory)):
+    for name, fn in (("deepl", _deepl), ("mymemory", _mymemory),
+                     ("lingva", _lingva), ("googleapis", _google_direct),
+                     ("google", _google)):
         result = _run(fn, name, text, debug)
         if result:
             break
@@ -720,7 +738,8 @@ with st.expander("🛠 Translation status (open this if Translate isn't working)
         for line in _dbg:
             st.write("• " + line)
     st.caption(
-        "deepl_key=MISSING → add DEEPL_API_KEY in Streamlit secrets for reliable "
-        "translation. langdetect=NO → the MyMemory fallback is off (upload the "
-        "requirements.txt that includes langdetect)."
+        "For cardless free translation the app uses MyMemory — this needs "
+        "langdetect installed (upload the requirements.txt that includes it). "
+        "Optional: add MYMEMORY_EMAIL = \"you@example.com\" in secrets to raise "
+        "the daily limit. deepl_key is only needed if you later add a DeepL key."
     )
