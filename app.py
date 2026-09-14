@@ -302,6 +302,19 @@ def _mymemory(text):
     return " ".join(good) or None
 
 
+def _run(fn, name, text, debug):
+    try:
+        out = fn(text)
+    except Exception as e:
+        debug.append(f"{name}: {type(e).__name__}: {str(e)[:90]}")
+        return None
+    if out and not _looks_like_error(out):
+        debug.append(f"{name}: ok")
+        return out
+    debug.append(f"{name}: no usable result" + (f" — {str(out)[:60]}" if out else ""))
+    return None
+
+
 def translate_it_en(text) -> str:
     text = (text or "").strip()
     if not text:
@@ -310,24 +323,25 @@ def translate_it_en(text) -> str:
     if text in cache:
         return cache[text]
 
+    debug = [
+        f"env: deepl_key={'set' if st.secrets.get('DEEPL_API_KEY') else 'MISSING'}"
+        f", langdetect={'yes' if LANGDETECT_AVAILABLE else 'NO'}"
+        f", mymemory={'yes' if MYMEMORY_AVAILABLE else 'NO'}"
+    ]
     result = None
-    # Try methods in order of reliability from a server; a couple of tries each.
-    for fn in (_deepl, _lingva, _google_direct, _google, _mymemory):
-        for _ in range(2):
-            try:
-                result = fn(text)
-            except Exception:
-                result = None
-            if result:
-                break
-            time.sleep(0.3)
+    for name, fn in (("deepl", _deepl), ("lingva", _lingva),
+                     ("googleapis", _google_direct), ("google", _google),
+                     ("mymemory", _mymemory)):
+        result = _run(fn, name, text, debug)
         if result:
             break
 
-    if result and not _looks_like_error(result):
-        cache[text] = result          # cache only successful translations
+    if result:
+        cache[text] = result
+        st.session_state["_tr_debug"] = debug + ["=> used above"]
         return result
-    return FAIL_MSG                    # not cached, so a later click retries
+    st.session_state["_tr_debug"] = debug + ["=> ALL failed"]
+    return FAIL_MSG
 
 
 # --------------------------------------------------------------------------- #
@@ -692,3 +706,21 @@ with pager_zone:
         if page < total_pages - 1 and st.button("Next ➡️", use_container_width=True):
             st.session_state["page"] = page + 1
             st.rerun()
+
+
+# --------------------------------------------------------------------------- #
+# Translation diagnostics (open this if Translate isn't working)
+# --------------------------------------------------------------------------- #
+st.write("")
+_dbg = st.session_state.get("_tr_debug")
+with st.expander("🛠 Translation status (open this if Translate isn't working)"):
+    if not _dbg:
+        st.caption("Click Translate on any message first, then reopen this panel.")
+    else:
+        for line in _dbg:
+            st.write("• " + line)
+    st.caption(
+        "deepl_key=MISSING → add DEEPL_API_KEY in Streamlit secrets for reliable "
+        "translation. langdetect=NO → the MyMemory fallback is off (upload the "
+        "requirements.txt that includes langdetect)."
+    )
