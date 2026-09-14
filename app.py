@@ -208,6 +208,30 @@ def _chunks(text, size=460):
     return [text[i:i + size] for i in range(0, len(text), size)] or [text]
 
 
+def _deepl(text):
+    """DeepL free/pro API — reliable from servers, auto-detects source.
+    Uses DEEPL_API_KEY from Streamlit secrets; skipped if not set."""
+    key = st.secrets.get("DEEPL_API_KEY")
+    if not key:
+        return None
+    import urllib.request
+    import urllib.parse
+    base = "https://api-free.deepl.com" if key.strip().endswith(":fx") else "https://api.deepl.com"
+    data = urllib.parse.urlencode({"text": text, "target_lang": "EN"}).encode()
+    req = urllib.request.Request(
+        base + "/v2/translate",
+        data=data,
+        headers={
+            "Authorization": f"DeepL-Auth-Key {key.strip()}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=12) as resp:
+        j = json.loads(resp.read().decode("utf-8"))
+    out = " ".join(t.get("text", "") for t in j.get("translations", [])).strip()
+    return out or None
+
+
 def _google_direct(text):
     """Google's lightweight endpoint — works from server IPs where the
     scraped web endpoint gets blocked. Stdlib only, no API key."""
@@ -259,7 +283,7 @@ def translate_it_en(text) -> str:
 
     result = None
     # Try methods in order of reliability from a server; a couple of tries each.
-    for fn in (_google_direct, _google, _mymemory):
+    for fn in (_deepl, _google_direct, _google, _mymemory):
         for _ in range(2):
             try:
                 result = fn(text)
