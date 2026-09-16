@@ -9,6 +9,7 @@ The Supabase key is read from Streamlit secrets, never hardcoded.
 """
 
 import html
+import re
 import json
 import math
 import time
@@ -283,15 +284,41 @@ def _google(text):
     return out if out and not _looks_like_error(out) else None
 
 
+_IT_WORDS = set("il la lo le gli un una di che e è sono per con non ciao grazie prego "
+                "come cosa questo posso vorrei buongiorno salve serve indirizzo numero "
+                "telefono città vuoi fare puoi bene si no della dello".split())
+_RO_WORDS = set("și este nu de la cu pentru bună mulțumesc salut care ce vreau acest "
+                "telefon adresă număr poți oraș vrei face bine da dumneavoastră".split())
+_EN_WORDS = set("the is are and you for with this what can would hello thanks please your "
+                "need address number phone city want make well yes from".split())
+
+
+def _detect_lang(text):
+    """Guess the source language. Uses langdetect if present, else a small
+    built-in heuristic — so translation needs no extra package."""
+    if LANGDETECT_AVAILABLE:
+        try:
+            code = _lang_detect(text[:500])
+            if code:
+                return code.split("-")[0]
+        except Exception:
+            pass
+    if re.search(r"[\u0400-\u04FF]", text):      # Cyrillic -> Bulgarian
+        return "bg"
+    words = set(re.findall(r"[a-zàèéìòùâîășțç]+", text.lower()))
+    if not words:
+        return "it"
+    scores = {"it": len(words & _IT_WORDS),
+              "ro": len(words & _RO_WORDS),
+              "en": len(words & _EN_WORDS)}
+    best = max(scores, key=scores.get)
+    return best if scores[best] > 0 else "it"
+
+
 def _mymemory(text):
-    """MyMemory's real API — free, no key. Detects source language first,
-    and uses MYMEMORY_EMAIL from secrets (if set) to raise the daily limit."""
-    if not LANGDETECT_AVAILABLE:
-        return None
-    try:
-        src = _lang_detect(text[:500])
-    except Exception:
-        return None
+    """MyMemory's real API — free, no key, stdlib only. Uses MYMEMORY_EMAIL
+    from secrets (if set) to raise the daily limit."""
+    src = _detect_lang(text)
     if not src or src == "en":
         return None
     import urllib.request
@@ -645,7 +672,10 @@ for gidx, ((conv, turn_part), rows) in enumerate(page_groups):
         show_tr = st.session_state.get(tkey, False)
         if show_tr:
             with st.spinner("Translating…"):
-                msg_box(translate_it_en(msg), gidx, "💬 Customer message (EN)")
+                _tr = translate_it_en(msg)
+            msg_box(_tr, gidx, "💬 Customer message (EN)")
+            if _tr == FAIL_MSG:
+                st.caption("⚠️ " + " | ".join(st.session_state.get("_tr_debug", [])))
 
         # Full conversation context, shown like a chat (WhatsApp style).
         # History has its OWN translate toggle so opening/translating it does
