@@ -226,7 +226,7 @@ def _deepl(text):
             "Content-Type": "application/x-www-form-urlencoded",
         },
     )
-    with urllib.request.urlopen(req, timeout=12) as resp:
+    with urllib.request.urlopen(req, timeout=6) as resp:
         j = json.loads(resp.read().decode("utf-8"))
     out = " ".join(t.get("text", "") for t in j.get("translations", [])).strip()
     return out or None
@@ -251,7 +251,7 @@ def _lingva(text):
                 f"{base}/api/v1/auto/en/{q}",
                 headers={"User-Agent": "Mozilla/5.0"},
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=6) as resp:
                 j = json.loads(resp.read().decode("utf-8"))
             out = (j.get("translation") or "").strip()
             if out and not _looks_like_error(out):
@@ -269,7 +269,7 @@ def _google_direct(text):
     url = ("https://translate.googleapis.com/translate_a/single"
            "?client=gtx&sl=auto&tl=en&dt=t&q=" + urllib.parse.quote(text))
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=12) as resp:
+    with urllib.request.urlopen(req, timeout=6) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     parts = [seg[0] for seg in data[0] if seg and seg[0]]
     out = "".join(parts).strip()
@@ -304,7 +304,7 @@ def _mymemory(text):
             params["de"] = email
         url = "https://api.mymemory.translated.net/get?" + urllib.parse.urlencode(params)
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=12) as resp:
+        with urllib.request.urlopen(req, timeout=6) as resp:
             j = json.loads(resp.read().decode("utf-8"))
         seg = ((j.get("responseData") or {}).get("translatedText") or "").strip()
         if not seg or _looks_like_error(seg):
@@ -644,13 +644,18 @@ for gidx, ((conv, turn_part), rows) in enumerate(page_groups):
             st.session_state[tkey] = not st.session_state.get(tkey, False)
         show_tr = st.session_state.get(tkey, False)
         if show_tr:
-            msg_box(translate_it_en(msg), gidx, "💬 Customer message (EN)")
+            with st.spinner("Translating…"):
+                msg_box(translate_it_en(msg), gidx, "💬 Customer message (EN)")
 
-        # Full conversation context, shown like a chat (WhatsApp style)
+        # Full conversation context, shown like a chat (WhatsApp style).
+        # History has its OWN translate toggle so opening/translating it does
+        # not slow down the main message Translate button.
         with st.expander("💬 View full conversation (context)"):
-            if show_tr:
-                st.caption("Showing English translation (Translate is on)")
-            render_history(rows[0].get("history_json"), translate=show_tr)
+            tr_hist = st.checkbox(
+                "🌐 Translate conversation to English",
+                key=f"trh_{rows[0]['id']}",
+            )
+            render_history(rows[0].get("history_json"), translate=tr_hist)
 
         st.markdown("<hr class='rv-sep'>", unsafe_allow_html=True)
 
@@ -672,7 +677,8 @@ for gidx, ((conv, turn_part), rows) in enumerate(page_groups):
                 small_text(reply)
                 if show_tr:
                     st.markdown("<i class='rv-text'>EN:</i>", unsafe_allow_html=True)
-                    small_text(translate_it_en(reply))
+                    with st.spinner("Translating…"):
+                        small_text(translate_it_en(reply))
                 if prior:
                     st.markdown(status_badge(prior), unsafe_allow_html=True)
                     if prior.get("rater"):
